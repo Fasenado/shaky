@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<!-- saved from url=(0032)http://www.staggeringbeauty.com/ -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+
+  <script type="text/javascript" async="" src="./Staggering Beauty_files/ga.js.download"></script><script type="text/javascript" src="./Staggering Beauty_files/paper.js.download"></script>
+  <!--<script type="text/javascript" src="lib/dat.gui.min.js"></script>-->
+  <script type="text/javascript" src="./Staggering Beauty_files/Tween.js.download"></script>
+  <script type="text/javascript" src="./Staggering Beauty_files/traer.js.download"></script>
+  
+  <!-- soundmanager2 replaced with HTML5 Audio -->
+  
+  <script type="text/javascript" src="./Staggering Beauty_files/jiggler.js.download"></script>
+  <script type="text/paperscript" canvas="canvas">
+var audio = null, audio2 = null;
+var audioStarted = false;
+
+(function setupAudio() {
+  var a1 = new Audio('drums.mp3');
+  var a2 = new Audio('texture.mp3');
+  a1.loop = true;
+  a2.loop = true;
+  a1.volume = 0;
+  a2.volume = 0;
+
+  audio = {
+    _el: a1,
+    _playing: false,
+    play: function() { if (!this._playing) { this._el.play().catch(function(){}); this._playing = true; } },
+    setVolume: function(v) { this._el.volume = Math.max(0, Math.min(1, v / 100)); }
+  };
+  audio2 = {
+    _el: a2,
+    _playing: false,
+    play: function() { if (!this._playing) { this._el.play().catch(function(){}); this._playing = true; } },
+    setVolume: function(v) { this._el.volume = Math.max(0, Math.min(1, v / 100)); }
+  };
+
+  function startOnInteraction() {
+    if (audioStarted) return;
+    audioStarted = true;
+    a1.play().catch(function(){});
+    a2.play().catch(function(){});
+  }
+  document.addEventListener('mousedown', startOnInteraction, { once: true });
+  document.addEventListener('click', startOnInteraction, { once: true });
+})();
+
+var img = new Image();
+img.src = '../assets/bg.gif';
+
+var restDrag = 0.8;
+var physics = new ParticleSystem(+0.34, -3, 0, restDrag);
+
+var params = {
+  mouseTargetEasing: 0.66,
+  mouseTargetEasingUp: 0.66,
+  needsDrag: false,
+  fillColor: '#000',
+  strokeColor: '#000'
+};
+
+var paths = [];
+var particles = [];
+var supports = [];
+var supports2 = [];
+var springs = [];
+
+var mouseDown = false;
+
+var firstPlay = true;
+var frameCount = 0;
+
+var numPoints = 8;
+var mouthPadding = 2;
+
+var idleTimeout;
+var idleTimeoutLength = 15000;
+
+var bend = -0.015;
+var smooth = true;
+
+var maxForce = 30;
+
+var segmentLength = getSegmentLength();
+var mouthPoints = numPoints-mouthPadding*2;
+
+var thickness = 110;
+var strokeWeight = 30;
+
+var prevEyeRotation = 0;
+var hue = 0;
+
+var padding = (thickness+strokeWeight)/2;
+var peaking = false;
+var prevPeaking = false;
+
+var lastPoint;
+
+var stress = 0;
+
+var mousePos = new Point(view.size.width/2, view.size.height-segmentLength);
+var targetMousePos = new Point(view.size.width/2, view.size.height-segmentLength);
+var pathShadow = new Path();
+
+var pathBody = new Path();
+pathBody.style = {
+  strokeColor: params.fillColor,
+  strokeWidth: thickness + strokeWeight,
+  strokeCap: 'round'
+};
+paths.push(pathBody);
+
+var pathMouth = new Path();
+pathMouth.style = {
+  strokeColor: '#f03',
+  strokeCap: 'round'
+};
+pathMouth.opacity = 0;
+paths.push(pathMouth);
+
+var pathTongue = new Path();
+pathTongue.style = {
+  strokeColor: '#AB2259',
+  strokeCap: 'round'
+};
+pathTongue.opacity = 0;
+paths.push(pathTongue)
+
+buildMouth();
+buildBody();
+
+var eyeHeight = { s: 1 };
+
+var blinkTween1 = new TWEEN.Tween(eyeHeight).to({ s: 0 }, 90).easing(TWEEN.Easing.Exponential.EaseIn);
+var blinkTween2 = new TWEEN.Tween(eyeHeight).to({ s: 1 }, 140).easing(TWEEN.Easing.Exponential.EaseIn);
+var blinkTween3 = new TWEEN.Tween(eyeHeight).to({ s: 0 }, 60).easing(TWEEN.Easing.Exponential.EaseIn);
+var blinkTween4 = new TWEEN.Tween(eyeHeight).to({ s: 1 }, 180).easing(TWEEN.Easing.Exponential.EaseIn);
+
+blinkTween1.chain(blinkTween2);
+blinkTween2.chain(blinkTween3);
+blinkTween3.chain(blinkTween4);
+blinkTween4.chain(blinkTween1);
+blinkTween1.delay(9000);
+blinkTween1.start();
+
+wrong = setTimeout(function() {
+  document.getElementById('shake').style.display = 'block';
+}, 15000);
+
+document.getElementById('canvas').height++;
+document.getElementById('canvas').width++;
+
+var eyeJiggler = new Jiggler(6);
+eyeJiggler.k = 4;
+eyeJiggler.mass = 5;
+
+var firstRun = true;
+function onFrame(event) {
+  Jiggler.update();
+  frameCount++;
+  TWEEN.update();
+  updatePaths();
+  firstRun = false;
+};
+
+setInterval(function() {
+  physics.gravity.x = Math.sin(Date.now()/4000)*0.4;
+  physics.gravity.y = Math.sin(Date.now()/6000)*0.4 - 3
+  updateAppearance();
+  setPositions();
+  physics.tick(1.0);
+}, 1000/60);
+
+var eye1Pos = new Point(), eye2Pos = new Point();
+
+function onDraw(ctx) {
+
+  var segment = pathBody.segments[numPoints - 2];
+  var angle = segment.angle + Math.PI/2;
+
+  var shake = (Math.random()-Math.random()) * 10;
+  var radius = Math.max(0, eyeJiggler.pos);
+
+  eye1Pos.x = segment.point.x;
+  eye1Pos.y = segment.point.y;
+  eye1Pos.x += Math.cos(angle)*thickness/2.4;
+  eye1Pos.y += Math.sin(angle)*thickness/2.4;
+
+  eye2Pos.x = segment.point.x;
+  eye2Pos.y = segment.point.y;
+  eye2Pos.x -= Math.cos(angle)*thickness/12;
+  eye2Pos.y -= Math.sin(angle)*thickness/12;
+
+  ctx.fillStyle = '#fff';
+  ctx.save();
+  ctx.translate(eye1Pos.x, eye1Pos.y);
+  ctx.rotate(angle);
+  ctx.scale(1, peaking ? 1 : eyeHeight.s);
+  circle(ctx, radius)
+  ctx.restore();
+
+  ctx.save();
+  ctx.translate(eye2Pos.x, eye2Pos.y);
+  ctx.rotate(angle);
+  ctx.scale(peaking ? 1.2 : 1, peaking ? 1.2 : eyeHeight.s);
+  circle(ctx, radius);
+  ctx.restore();
+
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+}
+
+function onMouseDown(event) {
+  mouseDown = true;
+}
+
+function onMouseUp(event) {
+  mouseDown = false;
+  if (params.needsDrag) {
+    targetMousePos.x = view.size.width/2;
+    targetMousePos.y = view.size.height-segmentLength;
+  }
+}
+
+window.addEventListener('mouseout', function() {}, false);
+
+function onMouseMove(event) {
+  if (params.needsDrag && !mouseDown) {
+    return;
+  }
+  var a = Math.atan2(event.point.y - view.size.height, event.point.x - view.size.width/2);
+  targetMousePos.x = view.size.width/2 + Math.cos(a) * segmentLength*3;
+  targetMousePos.y = view.size.height + Math.sin(a) * segmentLength;
+}
+
+function onResize() {
+  document.getElementById('canvas').height++;
+  document.getElementById('canvas').width++;
+  segmentLength = getSegmentLength();
+  particles[0].position.x = view.size.width/2;
+  particles[0].position.y = view.size.height + segmentLength;
+  targetMousePos.x = view.size.width/2;
+  targetMousePos.y = view.size.height - segmentLength;
+  for (var i = 0; i < springs.length; i++) {
+    springs[i].length = segmentLength;
+  }
+}
+
+function getSegmentLength() {
+  return view.size.height/numPoints * 0.7;
+}
+
+function buildMouth() {
+  for (var i = 0; i < mouthPoints; i++) {
+    pathMouth.add(new Point());
+    if ( i < mouthPoints-2) {
+      pathTongue.add(new Point());
+    }
+  }
+}
+
+function buildBody() {
+  for (i = 0; i < numPoints; i++) {
+    var x = view.size.width / 2;
+    var y = view.size.height - (i-1)*segmentLength;
+
+    var particle = physics.makeParticle(2.5, x, y, 0);
+    var support = physics.makeParticle(1, x, y - segmentLength, 0);
+    var support2 = physics.makeParticle(1, x, y + segmentLength, 0);
+
+    if (i > 0) {
+      var prevSupport = supports[i-1];
+      var prevParticle = particles[i-1];
+      physics.makeSpring(particle, prevSupport, 0.6, 0.48, 0);
+      physics.makeSpring(prevParticle, support2, 0.3, 0.7, 0);
+      springs.push(physics.makeSpring(particle, prevParticle, 0.2, 0.1, segmentLength));
+    }
+
+    if (i < 2) {
+      particle.makeFixed();
+    }
+
+    support.makeFixed();
+    support2.makeFixed();
+
+    var point = new Point();
+    pathBody.add(point);
+
+    particles.push(particle);
+    supports.push(support);
+    supports2.push(support2);
+  }
+}
+
+function setPositions() {
+  var e = mouseDown ? params.mouseTargetEasing : params.mouseTargetEasingUp;
+
+  mousePos.x += (targetMousePos.x - mousePos.x) * e;
+  mousePos.y += (targetMousePos.y - mousePos.y) * e;
+
+  particles[1].position.x = mousePos.x;
+  particles[1].position.y = mousePos.y;
+
+  var targetStress = 0;
+
+  for (var i = 1; i < numPoints; i++) {
+    var support = supports[i];
+    var curParticle = particles[i];
+
+    curParticle.position.x = clamp(curParticle.position.x, padding, view.size.width-padding);
+
+    var prevParticle = particles[i-1];
+    var angle = Math.atan2(curParticle.position.y - prevParticle.position.y, curParticle.position.x - prevParticle.position.x);
+
+    var force = curParticle.force.length();
+    if (force > maxForce) {
+      curParticle.force.scale(force / maxForce);
+      force = maxForce;
+    }
+
+    if (i > 1) targetStress += force;
+
+    support.position.x = curParticle.position.x + Math.cos(angle + i*bend)*segmentLength;
+    support.position.y = curParticle.position.y + Math.sin(angle + i*bend)*segmentLength;
+
+    pathBody.segments[i].angle = angle;
+
+    var support2 = supports2[i];
+    support2.position.x = curParticle.position.x + Math.cos(Math.PI + angle)*segmentLength;
+    support2.position.y = curParticle.position.y + Math.sin(Math.PI + angle)*segmentLength;
+  }
+
+  stress += (targetStress-stress)*0.03;
+}
+
+function updateAppearance() {
+  if (stress > 80) {
+    hue += stress > 300 ? Math.pow(stress/5, 2) : stress;
+
+    pathBody.strokeColor = 'hsl('+Math.round(hue)%360+', 100%, 50%)';
+    pathMouth.strokeColor = 'hsl('+Math.round(hue)%360+', 100%, 90%)';
+    pathTongue.strokeColor = 'hsl('+Math.round(hue)%360+', 100%, 50%)';
+    pathMouth.strokeWidth = thickness/1.5 + (Math.random()-Math.random())*20;
+    pathTongue.strokeWidth = pathMouth.strokeWidth*0.65;
+    peaking = true;
+    clearTimeout(wrong);
+    document.getElementById('shake').style.display = 'none';
+  } else {
+    pathBody.strokeColor = params.fillColor;
+    peaking = false;
+  }
+
+  if (peaking) {
+    document.body.className = frameCount % 3 != 0 ? 'bg-a' : 'bg-b';
+
+    if (!prevPeaking) {
+      physics.drag = 0.2;
+      pathMouth.opacity = 1;
+      pathTongue.opacity = 1;
+      eyeJiggler.rest = 17;
+    }
+    if (firstPlay && audio) {
+      audio.setVolume(50);
+      audio2.setVolume(70);
+      firstPlay = false;
+    }
+  } else if (!peaking && prevPeaking) {
+    document.body.className = '';
+    physics.drag = restDrag;
+    pathMouth.opacity = 0;
+    pathTongue.opacity = 0;
+    eyeJiggler.rest = 6;
+    if (audio) {
+      audio.setVolume(0);
+      audio2.setVolume(0);
+      firstPlay = true;
+    }
+  }
+
+  prevPeaking = peaking;
+}
+
+function updatePaths() {
+  for (var i = 0, j, l; i < numPoints; i++) {
+    var curParticle = particles[i];
+    var prevParticle = particles[i-1];
+    var angle = pathBody.segments[i].angle + Math.PI/2;
+
+    pathBody.segments[i].point.x = curParticle.position.x;
+    pathBody.segments[i].point.y = curParticle.position.y;
+
+    j = i-mouthPadding+1;
+    l = pathMouth.segments.length;
+
+    if (j >= 0 && j < l) {
+      pathMouth.segments[j].point.x = curParticle.position.x;
+      pathMouth.segments[j].point.y = curParticle.position.y;
+      pathMouth.segments[j].point.x += Math.cos(angle)*thickness/6;
+      pathMouth.segments[j].point.y += Math.sin(angle)*thickness/10;
+
+      if (pathTongue.segments[j]) {
+        pathTongue.segments[j].point.x = pathMouth.segments[j].point.x;
+        pathTongue.segments[j].point.y = pathMouth.segments[j].point.y;
+        pathTongue.segments[j].point.x -= Math.cos(angle)*(pathMouth.strokeWidth/15);
+        pathTongue.segments[j].point.y -= Math.sin(angle)*(pathMouth.strokeWidth/5);
+      }
+    }
+  }
+
+  if (smooth) {
+    for (var i = 0, l = paths.length; i < l; i++) {
+      paths[i].smooth();
+    }
+  }
+}
+
+function unSmooth() {
+  for (var j = 0, k = paths.length; j < k; j++) {
+    var path = paths[j];
+    for (var i = 0, l = path.segments.length; i < l; i++) {
+      var segment = path.segments[i];
+      segment.handleIn = segment.handleOut = null;
+    }
+  }
+}
+
+function clamp(v, lo, hi) {
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return v;
+}
+
+var _draw = view.draw;
+view.draw = function() {
+  _draw.call(this);
+  if (firstRun) return;
+  onDraw(this._context);
+}
+
+function circle(ctx, radius, angle1, angle2) {
+  ctx.beginPath();
+  ctx.arc(0, 0, radius, angle1 || 0, angle2 || Math.PI*2, true);
+  ctx.fill();
+}
+  </script>
+  
+  <link href="./Staggering Beauty_files/style.css" media="screen" rel="stylesheet" type="text/css">
+
+  <title>Staggering Beauty</title>
+  <meta name="title" content="Staggering Beauty">
+  
+  <meta name="Description" content="A website to remember.">
+  <meta name="viewport" content="initial-scale=0.6,user-scalable=no">
+  <link rel="image_src" href="http://www.staggeringbeauty.com/assets/poster.png">
+</head>
+<body class="">
+
+  <canvas id="canvas" resize="" style="width:100%;height:100%;display:block;"></canvas>
+  <script type="text/javascript">
+
+    var _gaq = _gaq || [];
+    _gaq.push(['_setAccount', 'UA-353220-16']);
+    _gaq.push(['_trackPageview']);
+
+    (function() {
+      var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+      ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+      var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+    })();
+
+  </script>
+
+  <div id="splash">
+    <div id="splash-inner">
+      <h1>$STAGGER</h1>
+      <p class="desc">A Solana experiment featuring a mascot that perfectly captures the spirit of most traders in the current market — their chaos, panic, euphoria, and every wild emotion in between. Shake it to feel it.</p>
+      
+      <div class="splash-links">
+        <a href="https://x.com/straggering_beauty" target="_blank" class="splash-link">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          @straggering_beauty
+        </a>
+      </div>
+
+      <div class="contract">
+        <span class="contract-label">CA:</span>
+        <span class="contract-addr" id="ca-text">GPQUKSKqSTGEqrYGxgEaHQ7Q1mAKw6EoCJ3eHjYEpump</span>
+        <button class="copy-btn" id="copy-btn" title="Copy">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        </button>
+      </div>
+
+      <div class="warning-box">
+        <p><strong>WARNING: CONTAINS FLASHING IMAGES</strong></p>
+        <p class="jp">警告：点滅する画像が含まれています</p>
+      </div>
+
+      <button id="enter-btn">ENTER</button>
+    </div>
+  </div>
+
+  <div id="shake-counter">
+    <div class="counter-bar">
+      <div class="counter-fill" id="counter-fill"></div>
+    </div>
+    <div class="counter-text">
+      <span id="shake-count">0</span> / 50,000 shakes for buyback
+    </div>
+    <div class="counter-live">
+      <span class="live-dot"></span>
+      <span id="online-count">0</span> shaking now
+    </div>
+  </div>
+
+  <div id="top-links">
+    <a href="https://x.com/straggering_beauty" target="_blank">Twitter</a>
+    <a href="https://pump.fun/coin/GPQUKSKqSTGEqrYGxgEaHQ7Q1mAKw6EoCJ3eHjYEpump" target="_blank">Pump</a>
+  </div>
+
+  <div id="shake" style="display: none;">
+    Shake vigorously
+  </div>
+
+<script type="text/javascript">
+document.getElementById('copy-btn').addEventListener('click', function(e) {
+  e.stopPropagation();
+  var addr = document.getElementById('ca-text').textContent;
+  navigator.clipboard.writeText(addr).then(function() {
+    var btn = document.getElementById('copy-btn');
+    btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#0f0" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+    setTimeout(function() {
+      btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+    }, 1500);
+  });
+});
+
+document.getElementById('enter-btn').addEventListener('click', function() {
+  document.getElementById('splash').style.opacity = '0';
+  setTimeout(function() {
+    document.getElementById('splash').style.display = 'none';
+  }, 400);
+});
+
+(function() {
+  var GOAL = 50000;
+  var total = Math.floor(Math.random() * 4000) + 12000;
+  var online = Math.floor(Math.random() * 30) + 25;
+  var isPeaking = false;
+  var countEl = document.getElementById('shake-count');
+  var fillEl = document.getElementById('counter-fill');
+  var onlineEl = document.getElementById('online-count');
+
+  onlineEl.textContent = online;
+
+  function getTotal() {
+    return Math.min(GOAL, total);
+  }
+
+  function update() {
+    var total = getTotal();
+    countEl.textContent = total.toLocaleString('en-US');
+    fillEl.style.width = Math.min(100, (total / GOAL) * 100) + '%';
+  }
+
+  setInterval(function() {
+    total += Math.floor(Math.random() * 30) + 10;
+    if (Math.random() < 0.15) {
+      online += Math.floor(Math.random() * 7) - 3;
+      online = Math.max(12, Math.min(150, online));
+      onlineEl.textContent = online;
+    }
+    update();
+  }, 500);
+
+  setInterval(function() {
+    var body = document.body;
+    var nowPeaking = body.className === 'bg-a' || body.className === 'bg-b';
+    if (nowPeaking) {
+      if (!isPeaking) isPeaking = true;
+      total += Math.floor(Math.random() * 15) + 5;
+      if (Math.random() < 0.3) {
+        online = Math.min(150, online + 1);
+        onlineEl.textContent = online;
+      }
+      update();
+    } else if (isPeaking) {
+      isPeaking = false;
+    }
+  }, 100);
+
+  update();
+})();
+</script>
+
+</body></html>
